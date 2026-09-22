@@ -1,0 +1,34 @@
+# Local stack: the optional read-only results API over campaign summaries and signed repro files.
+# Only locally built images; nothing is pulled at runtime besides the pinned bases. Simulations
+# themselves run in-process with `uv run das ...`; they need no container.
+services:
+  results-api:
+    build:
+      context: .
+    image: deterministic-agent-simulator:local
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      APP_ENVIRONMENT: prod
+      APP_LOG_LEVEL: INFO
+      # Comma-separated SHA-256 digests; generate with `uv run das generate-api-key`.
+      APP_API_KEY_SHA256: ${APP_API_KEY_SHA256:-}
+      # <sha256>=<scope>+<scope> entries; scopes: results:read, repros:verify.
+      APP_API_KEY_SCOPES: ${APP_API_KEY_SCOPES:-}
+      # Verifies replay-file signatures (the API never signs anything).
+      APP_REPLAY_HMAC_KEY: ${APP_REPLAY_HMAC_KEY:-}
+      APP_RESULTS_DIR: /data/results
+    volumes:
+      # campaign summaries (campaigns/*.json) and repro files (repros/*.json), mounted read-only
+      - ./var/results:/data/results:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    restart: unless-stopped
