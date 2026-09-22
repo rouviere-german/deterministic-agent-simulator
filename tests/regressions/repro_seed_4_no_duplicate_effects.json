@@ -1,0 +1,63 @@
+{
+  "config": {
+    "bugs": [
+      "non_idempotent_retry"
+    ],
+    "fault_mode": "swarm",
+    "max_loop_steps": 600000,
+    "max_steps_per_ticket": 12,
+    "max_tickets": 10,
+    "min_tickets": 5,
+    "scheduler": "random",
+    "workers": 3
+  },
+  "created_by": "deterministic-agent-simulator 0.1.0",
+  "decisions": [
+    {
+      "n": 1,
+      "plan": "T-5",
+      "proposal": {
+        "args": {
+          "ticket_id": "T-5"
+        },
+        "name": "read_ticket"
+      },
+      "purpose": "next"
+    },
+    {
+      "n": 2,
+      "plan": "T-5",
+      "proposal": {
+        "args": {
+          "body": "Your refund of 120.00 EUR for T-5 is on its way.",
+          "subject": "Re: Refund for order 1117",
+          "to": "farid.haddad@customers.example"
+        },
+        "name": "send_email"
+      },
+      "purpose": "next"
+    }
+  ],
+  "expected": {
+    "detail": "send_email committed twice for T-5 (effects #4 and #5)",
+    "invariant": "no_duplicate_effects",
+    "original_trace_length": 193,
+    "trace_hash": "4e078a65c410a1fca032fc3092b8bde28f327c7a24a8a9b537ea6b2eb38c414d",
+    "trace_length": 17
+  },
+  "faults": [
+    [
+      "timeout_after_commit",
+      "email.send",
+      "T-5",
+      1
+    ]
+  ],
+  "format": "das-repro/1",
+  "key_id": "tests",
+  "seed": 4,
+  "signature": "72547a9aa337a8f8dceb3d27a238bd416ccd4cec12d1dc1fe5b903935cd90a56",
+  "tickets": [
+    4
+  ]
+}
