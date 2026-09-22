@@ -1,0 +1,11 @@
+{
+  "bugs_found": {"min": 8},
+  "soundness_violations": {"max": 0},
+  "shrink_invariant_changed": {"max": 0},
+  "median_shrink_ratio": {"min": 4},
+  "determinism_mismatched_seeds": {"max": 0},
+  "golden_mismatches": {"max": 0},
+  "checker_disagreements": {"max": 0},
+  "checker_fixture_failures": {"max": 0},
+  "seeds_per_second": {"min": 5}
+}

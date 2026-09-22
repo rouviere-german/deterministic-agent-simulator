@@ -1,0 +1,352 @@
+# CI for deterministic-agent-simulator. CI runs online; the test suite, demo and bench run
+# offline (seeded SimLLM, no network, no API key).
+#
+# Per push: the baseline jobs, the simulator evaluation bench (CI profile), a 2,000-seed clean
+# campaign plus planted-bug sensitivity (sim-gate), and trace hashes of 200 seeds recomputed on
+# ubuntu-latest and windows-latest with PYTHONHASHSEED pinned (determinism, determinism-compare).
+# Nightly (schedule): a time-boxed 50,000-seed swarm campaign that shrinks any failure into a
+# signed replay file and uploads it, plus the full evaluation bench (nightly-swarm).
+#
+# Action pinning: actions are pinned to release tags and kept current by Dependabot
+# (.github/dependabot.yml, github-actions ecosystem). Before a repo is published, replace each tag
+# with the full commit SHA it points to and keep the tag as a trailing comment (for example with
+# `pinact run`): a tag can be moved, a SHA cannot. Verify the trivy-action tag in particular.
+# Container base images are pinned by digest in the Dockerfile.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  PYTHONHASHSEED: "0"
+  HYPOTHESIS_PROFILE: ci
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    name: typecheck (mypy --strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run mypy
+
+  test:
+    name: test (pytest, coverage floor 85%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  bench:
+    name: bench (regression thresholds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python bench/bench_baseline.py --check
+      # Sensitivity (8 bugs x 2 fault modes), soundness (2,000 seeds), shrinking, determinism,
+      # Wing-Gong vs brute force and throughput, each gated by bench/sim_thresholds.json.
+      - run: uv run python bench/bench_sim.py --profile ci --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench/results/
+          if-no-files-found: ignore
+
+  sim-gate:
+    name: sim gate (2,000 clean seeds, planted-bug sensitivity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: clean build violates nothing on 2,000 swarm seeds
+        run: >-
+          uv run das campaign --seeds 2000 --mode swarm --expect-clean
+          --out var/results/campaigns/push.json --metrics-out var/push-metrics.prom
+      - name: every planted bug is found (fixed faults, first failure)
+        run: |
+          for bug in $(uv run python -c "from deterministic_agent_simulator.agent.bugs import BugFlag; print(' '.join(f.value for f in BugFlag))"); do
+            uv run das campaign --bugs "$bug" --mode fixed --seeds 2000 --stop-on-first --expect-bug > /dev/null
+            echo "found: $bug"
+          done
+      - run: uv run pytest -q tests/integration/test_sensitivity.py tests/integration/test_protocol_scenarios.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-gate
+          path: |
+            var/results/campaigns/push.json
+            var/push-metrics.prom
+          if-no-files-found: ignore
+
+  determinism:
+    name: determinism (${{ matrix.os }}, 200 seeds, PYTHONHASHSEED pinned)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      # The golden file was computed on Windows; a mismatch on either OS fails the job.
+      - run: >-
+          uv run das hashes --count 200
+          --compare tests/fixtures/golden_trace_hashes.json
+          --out var/hashes-${{ matrix.os }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-${{ matrix.os }}
+          path: var/hashes-${{ matrix.os }}.json
+
+  determinism-compare:
+    name: determinism (Linux and Windows hashes identical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [determinism]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hashes-*
+          merge-multiple: true
+          path: hashes
+      - run: cmp hashes/hashes-ubuntu-latest.json hashes/hashes-windows-latest.json
+
+  nightly-swarm:
+    name: nightly swarm (50,000 seeds, time-boxed, shrunk repros uploaded)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      # Optional repository secret; without it failures are still shrunk into redacted reports.
+      APP_REPLAY_HMAC_KEY: ${{ secrets.REPLAY_HMAC_KEY }}
+      APP_REPLAY_KEY_ID: nightly
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: swarm campaign (clean build must violate nothing)
+        run: >-
+          uv run das campaign --seeds 50000 --start 5000000 --mode swarm
+          --max-seconds 5400 --repro-dir var/nightly/repros --max-repros 10
+          --out var/nightly/summary.json --metrics-out var/nightly/metrics.prom
+          --expect-clean
+      - name: full evaluation bench
+        run: uv run python bench/bench_sim.py --check --out var/nightly/bench_sim.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-swarm
+          path: var/nightly/
+          if-no-files-found: ignore
+
+  baseline:
+    name: baseline (scripts/check_baseline.py)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv run --no-project python scripts/check_baseline.py
+
+  bandit:
+    name: bandit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run bandit -c pyproject.toml -r src
+
+  semgrep:
+    name: semgrep (registry + repo rules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: semgrep scan
+        run: >-
+          uvx --from "semgrep>=1.100,<2" semgrep scan
+          --config p/python
+          --config p/secrets
+          --config .semgrep/rules.yml
+          --error --metrics off
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      # tasks.py exports the locked requirements (with hashes) and applies the reviewed ignore
+      # list from [tool.portfolio.audit] in pyproject.toml.
+      - run: uv run --no-project python tasks.py pip-audit
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: docker (hadolint, build, smoke test, trivy, syft SBOM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [lint, typecheck, test]
+    env:
+      IMAGE: deterministic-agent-simulator:ci
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+      - uses: docker/setup-buildx-action@v3
+      - name: docker build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+      - name: container smoke test (HEALTHCHECK reports healthy)
+        run: |
+          docker run --detach --name app --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges --health-interval 3s "$IMAGE"
+          for _ in $(seq 1 30); do
+            status="$(docker inspect --format '{{.State.Health.Status}}' app)"
+            if [ "$status" = "healthy" ]; then
+              test "$(docker inspect --format '{{.Config.User}}' app)" = "10001:10001"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs app
+          exit 1
+      - name: trivy image scan
+        uses: aquasecurity/trivy-action@0.32.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+      - name: syft CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
