@@ -91,8 +91,9 @@ flowchart TB
 - **Checkers** (`check/`). Ten oracles (no duplicate effects, authorized effects, budget, approval
   freshness, consume-once, ledger linearizability, termination, audit chain, hermeticity, agent
   errors) judge from ground truth. The ledger's client-observed history is checked for
-  linearizability against a time-aware sequential model with a memoized Wing-Gong search
-  (ADR 0004).
+  linearizability against a time-aware sequential model with a memoized Wing-Gong search; the search
+  is differentially tested against brute force and the model against an independent exhaustive
+  checker that executes the real ledger on symbolic times (ADR 0004).
 - **Output**. ddmin shrinks a failure over tickets, fault schedule and model decisions; the result
   is written as an HMAC-signed scenario (no ticket text) plus a pytest module that reproduces the
   failure with the recorded flags and must pass on the current build (ADR 0005).
@@ -149,8 +150,7 @@ trimming.
 
 ### Evaluation against the spec
 
-`uv run python bench/bench_sim.py --soundness-seeds 50000 --check` (1,493 s in total), plus
-`uv run python bench/bench_sim.py --only scheduler` for the last row:
+`uv run python bench/bench_sim.py --soundness-seeds 50000 --check` (1,593 s in total, every section):
 
 | Metric | Spec target | Measured |
 |---|---|---|
@@ -159,8 +159,8 @@ trimming.
 | Shrinking: median trace-length reduction | at least 10x | **8.05x** (min 2.41x, max 18.16x, 24 shrinks); **below target**, see Non-goals |
 | Determinism: identical hashes on reruns | 100 reruns per seed | 20 seeds x 100 reruns: **0** seeds with more than one hash; 200/200 golden hashes match on Windows |
 | Determinism across Linux and Windows | identical hashes | configured as the `determinism` CI matrix; **not run yet** (no remote) |
-| Checker: Wing-Gong vs brute force, histories of at most 8 operations | agreement | **2,000/2,000** random histories agree; 8/8 known fixtures |
-| Throughput | reported | **38.3 seeds/s** = 2,298 seeds/min (5-10 tickets per seed, every oracle on) |
+| Checker: Wing-Gong vs brute force, histories of at most 8 operations | agreement | **2,000/2,000** random histories agree; the approval *model* also agrees with the independent reference checker on **1,000/1,000** histories (364 of them not linearizable); 8/8 known fixtures |
+| Throughput | reported | **36.3 seeds/s** = 2,176 seeds/min (5-10 tickets per seed, every oracle on) |
 | Scheduler tie-breaks | (not in spec) | median 6 choices per run (max 23); the seeded order changed the semantic trace of 1/300 seeds compared with FIFO |
 
 ### Sensitivity: seeds to the first failure
@@ -227,7 +227,7 @@ need a crash or a contended worker pool that another ticket provides.
 
 ### Offline demo
 
-`uv run python tasks.py demo` (14.6 s wall clock), abridged JSON output:
+`uv run python tasks.py demo` (14.7 s wall clock), abridged JSON output:
 
 ```json
 {
@@ -246,7 +246,7 @@ need a crash or a contended worker pool that another ticket provides.
   "regression_test_on_clean_build": {"reproduces": "passed", "holds": "passed"},
   "otel_spans_exported": 9,
   "audit_chain_verified": true,
-  "clean_build": {"seeds": 500, "violations": {}, "seeds_per_second": 38.4}
+  "clean_build": {"seeds": 500, "violations": {}, "seeds_per_second": 38.0}
 }
 ```
 
@@ -256,14 +256,14 @@ need a crash or a contended worker pool that another ticket provides.
 
 | benchmark | runs | p50 (us) | p95 (us) |
 |---|---:|---:|---:|
-| redact_text_1kb | 2000 | 344.3 | 454.4 |
-| rate_limiter_check | 20000 | 1.8 | 2.0 |
-| llm_request_sha256_10_messages | 2000 | 99.7 | 124.4 |
-| audit_append_fsync | 200 | 7924.9 | 9577.5 |
-| audit_verify_1000_entries | 10 | 36625.2 | 39209.1 |
-| sim_random_1000_draws | 200 | 820.5 | 1100.6 |
-| sim_run_one_seed | 60 | 26565.7 | 35540.0 |
-| wing_gong_ledger_history_40_ops | 100 | 196.9 | 236.0 |
+| redact_text_1kb | 2000 | 339.7 | 432.0 |
+| rate_limiter_check | 20000 | 1.8 | 1.9 |
+| llm_request_sha256_10_messages | 2000 | 97.9 | 114.9 |
+| audit_append_fsync | 200 | 7614.8 | 9014.4 |
+| audit_verify_1000_entries | 10 | 35521.4 | 37027.8 |
+| sim_random_1000_draws | 200 | 818.1 | 1084.7 |
+| sim_run_one_seed | 60 | 28354.7 | 41106.9 |
+| wing_gong_ledger_history_40_ops | 100 | 213.4 | 321.5 |
 
 CI runs `bench/bench_baseline.py --check` and `bench/bench_sim.py --profile ci --check` on every
 push; `bench/thresholds.json` and `bench/sim_thresholds.json` hold the regression thresholds (for
@@ -332,11 +332,24 @@ The threat model with a threat -> control -> test table is in
   In this world that rarely matters (1 of 300 seeds changed its semantic trace between seeded and
   FIFO order); interleavings vary mostly through keyed, randomized latencies.
 - **The audit chain is not attacked by the simulation.** The chain is appended by the world's audit
-  adapter, and no fault kind or bug flag corrupts, reorders or truncates it; the oracle checks every
-  append and, since this round of fixes, that the final chain is the one the run appended to
-  (truncation and forks are detected). It still fires only in tests, not in campaigns. Moving the
-  chain into the agent's crashable store and planting a non-atomic append would make it a real
-  target; that is a change to the system under test, and it was not made here.
+  adapter, and no fault kind or bug flag corrupts, reorders or truncates it. The oracle checks every
+  append and requires the chain left at the end to be the one the run appended to, so truncation and
+  forks are detected, but it fires in tests rather than in campaigns. Moving the chain into the
+  agent's crashable store and planting a non-atomic append would make it a real target; that is a
+  change to the system under test, and it was not made here.
+- **No priority-based interleaving search.** The seeded tie-breaker has a choice at a median of 6
+  points per run, and only 1 of 300 seeds changes its semantic trace compared with FIFO order, so
+  most of the interleaving variety comes from keyed microsecond latencies rather than from
+  same-instant races. A PCT-style scheduler (random task priorities with d change points), or
+  quantizing latencies onto a coarse grid so that ties actually happen, would explore concurrency
+  more deliberately. Both change what every existing seed does, including the committed golden
+  hashes, so they are future work and not part of these numbers.
+- **One system under test, written here.** The reference agent, its oracles and its eight planted
+  bugs were written together, so the sensitivity results are self-graded: no failure found so far was
+  a surprise. Pointing the simulator at an agent it did not grow up with - an Anthropic tool-use loop
+  driven through the same ports, or a small agent in the style of a third-party framework - is the
+  honest next step and is not done here; docs/WRITING_SIM_TESTS.md describes the port contract such
+  an agent has to adopt.
 - **Live LLM evaluation.** The simulator measures harness safety under a seeded policy, not model
   quality. The Anthropic adapter is verified against a mocked client only; nothing here calls the
   API.
