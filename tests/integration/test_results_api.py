@@ -134,6 +134,19 @@ def test_verify_accepts_signed_documents_and_rejects_forgeries(client: TestClien
     assert forged.json() == {"valid": False}
 
 
+def test_verify_answers_a_hostile_submission_instead_of_failing(client: TestClient) -> None:
+    """A submission that is expensive to even serialize is invalid, not a 500."""
+    nested: Any = 1
+    for _ in range(400):
+        nested = [nested]
+    deep = client.post(
+        "/v1/repros/verify", json={"document": {"seed": nested}}, headers=auth(VERIFIER)
+    )
+    assert deep.status_code in (200, 422)
+    if deep.status_code == 200:
+        assert deep.json() == {"valid": False}
+
+
 def test_verify_is_unavailable_without_a_replay_key(results_dir: Path) -> None:
     app = create_results_app(settings(replay_hmac_key=None), results_dir=results_dir)
     with TestClient(app, raise_server_exceptions=False) as test_client:

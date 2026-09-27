@@ -198,10 +198,11 @@ def create_results_app(
     async def verify_repro(body: VerifyRequest) -> Mapping[str, JsonValue]:
         if keyring is None:
             raise AppError(503, "unavailable", "Replay verification is not configured.")
-        raw = json.dumps(body.document).encode("utf-8")
         try:
+            # Serializing a deeply nested submission is itself recursive, so it is inside the guard.
+            raw = json.dumps(body.document).encode("utf-8")
             scenario, expected = parse_repro(raw, keyring)
-        except ReproError:
+        except (ReproError, ValueError, RecursionError):
             return {"valid": False}
         return {"valid": True, "seed": scenario.seed, "invariant": str(expected["invariant"])}
 
