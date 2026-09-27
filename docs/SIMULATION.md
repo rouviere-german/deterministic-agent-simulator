@@ -24,7 +24,7 @@ What makes this hold:
 | Wall-clock time | `sim/loop.py`: virtual time in integer microseconds; `time.sleep` is blocked |
 | Callback order | `sim/loop.py`: one ready callback per iteration, chosen by a seeded stream |
 | Randomness | `sim/rand.py`: SplitMix64 with integer arithmetic only, keyed stream derivation |
-| Real I/O | `sim/hermetic.py` and the loop's blocked methods: sockets, files outside tmp, threads, subprocesses raise |
+| Real I/O | `sim/hermetic.py` and the loop's blocked methods: sockets, files and directories outside the run's scratch root, threads, subprocesses raise; host-clock and entropy reads raise in strict mode |
 | `hash()` randomization | Nothing iterates over sets of strings in an order-sensitive way; checked with three `PYTHONHASHSEED` values |
 | Float formatting and libm | Traces carry only strings, integers, booleans; floats are dyadic rationals compared, never logged |
 | Task names | Deterministic `sim-N` names instead of asyncio's process-wide counter |
@@ -34,9 +34,13 @@ What makes this hold:
 - **`loop.py` - `SimEventLoop`** implements `asyncio.AbstractEventLoop` directly. Ordinary
   `async`/`await` code, `asyncio.Lock`, `asyncio.wait`, `asyncio.timeout` and task cancellation
   work unchanged. Time jumps to the next timer when nothing is runnable. When several callbacks
-  are ready at the same virtual instant, a seeded `SimRandom` picks one, so every interleaving is
-  reachable and each choice is folded into the trace hash. Deadlock (nothing runnable, no timer,
-  main task unfinished) and livelock (more than `max_steps` callbacks) are errors.
+  are ready at the same virtual instant, a seeded `SimRandom` picks one, so every interleaving of
+  the callbacks that are ready together is reachable, and each choice is folded into the trace hash.
+  How much that explores is measured, not assumed: the bench reports a median of 6 choice points per
+  run and 1 of 300 seeds whose semantic trace differs from FIFO order, so in this world the
+  interleaving variety comes mostly from the keyed latency draws (README Non-goals). Deadlock
+  (nothing runnable, no timer, main task unfinished) and livelock (more than `max_steps` callbacks)
+  are errors.
 - **`rand.py` - `SimRandom`** is SplitMix64 (Steele, Lea and Flood, OOPSLA 2014). `derive(labels)`
   returns an independent stream keyed by SHA-256 of the parent key and the labels; draws on the
   parent do not affect it.
@@ -158,7 +162,7 @@ omniscient view (committed effects, the ledger's truth log), not from what the a
 | `consume_once` | no approval is consumed by two different consumers |
 | `ledger_linearizable` | the client-observed ledger history is linearizable |
 | `termination` | every plan stays within its decision bound; the run finishes (no deadlock, livelock or missed deadline) |
-| `audit_chain_valid` | the agent's hash-chained audit trail verifies |
+| `audit_chain_valid` | the agent's hash-chained audit trail verifies, and the chain left at the end is the one the run appended to (no lost, reordered or forked entries) |
 | `hermetic` | no real I/O was attempted |
 | `agent_error` | the agent raised no unexpected exception |
 
@@ -169,9 +173,11 @@ compositional) and each part is checked with the Wing and Gong search in Lowe's 
 list of call and return events, lifted when an operation is linearized, and a cache of
 `(linearized set, model state)` pairs. The sequential model of one approval tracks an interval of
 expiry times that are still consistent with the observations, because expiry makes the outcome
-of `status` and `consume` depend on *when* each operation takes effect. A brute-force checker
-that tries every permutation is kept for differential tests on histories of at most 8
-operations.
+of `status` and `consume` depend on *when* each operation takes effect; each operation's own
+linearization point is kept as a function of that expiry rather than as a number (ADR 0004). A
+brute-force checker that tries every permutation is kept for differential tests of the *search* on
+histories of at most 8 operations, and `ledger_reference.py` - which runs the real ledger on
+symbolic times and solves the resulting difference constraints - checks the *model* itself.
 
 ## From a failing seed to a regression test
 

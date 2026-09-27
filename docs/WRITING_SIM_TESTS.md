@@ -24,11 +24,15 @@ the simulator:
 
 Rules for code that runs under simulation:
 
-1. **No ambient I/O.** No `open`, sockets, `time.time()`, `time.sleep`, `datetime.now()`,
-   `random`, threads, executors or subprocesses. The hermetic guard and the event loop raise
-   `HermeticityViolation` for the real-I/O ones and the `hermetic` oracle fails the run; the
-   others (reading the host clock or `random`) are not caught automatically, they silently break
-   determinism, which the rerun tests in `tests/integration/test_determinism.py` expose.
+1. **No ambient I/O.** No `open` (or any other path-taking `os`/`shutil` call) outside the run's
+   scratch root, no sockets or name lookups, no `time.sleep`, threads, executors or subprocesses,
+   and no `time.time()`, `datetime.now()`, `os.urandom`, `uuid4` or `random` module function. The
+   hermetic guard and the event loop raise `HermeticityViolation` and the `hermetic` oracle fails
+   the run; the clock and entropy checks are strict mode, which `run_scenario` turns on. A *seeded*
+   `random.Random` instance is fine, but `ports.random` (SimRandom) is what keys draws per ticket so
+   that shrinking stays stable. What the guard cannot see - a C extension, `ctypes`, a name imported
+   before the run started - still breaks determinism silently, which the rerun tests in
+   `tests/integration/test_determinism.py` expose.
 2. **Plain asyncio only.** `async`/`await`, `asyncio.Lock`, `Event`, `Queue`, `wait`, `gather`,
    `timeout` and cancellation work on `SimEventLoop`. `asyncio.to_thread`, `run_in_executor` and
    `loop.getaddrinfo` do not.

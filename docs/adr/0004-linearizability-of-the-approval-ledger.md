@@ -67,9 +67,11 @@ is only known to lie within its invocation-response interval.
   response was lost may have committed much later, and its expiry is bounded above only by when
   later operations returned. The model rejected real executions in which a lost decision committed
   after the next operation's earliest point (with a second approver, or a retried consume); the two
-  smallest such executions are fixtures in
-  `tests/unit/test_ledger_reference.py`. Nothing in the current world produces them - one reviewer
-  that retries only after the commit - which is why 50,000 clean seeds never showed it, and why the
-  reference checker rather than a campaign is what found it.
+  smallest such executions are fixtures in `tests/unit/test_ledger_reference.py`, next to an
+  exhaustive grid of 1,080 executions of that family (the earlier model rejected 68 of them).
+  Nothing in the current world produces them - one reviewer, which retries only after the commit -
+  which is why 50,000 clean seeds never showed it. A campaign
+  cannot find this class of error at all: only a second, independent decision procedure can, which
+  is why the reference checker now runs in the unit tests and in the bench.
 - The model is specific to one object type. Another service needs its own sequential model; the
   search and the partitioning are reusable.

@@ -2,7 +2,8 @@
 
 :mod:`~deterministic_agent_simulator.check.ledger_model` is an *abstraction* of the ledger: rather
 than choosing when an approval was granted, it carries an interval of expiry times that are still
-possible. Comparing it with :func:`~...check.linearizability.brute_force_check` therefore validates
+possible. Comparing it with
+:func:`~deterministic_agent_simulator.check.linearizability.brute_force_check` therefore validates
 the search, not the model, because both use the same ``ApprovalModel``. This module decides the same
 question a second way, sharing nothing with that model:
 

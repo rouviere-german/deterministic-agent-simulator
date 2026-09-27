@@ -204,7 +204,13 @@ def run_scenario(
     hermetic: bool = True,
     allowed_roots: Sequence[Path] | None = None,
 ) -> RunResult:
-    """Execute one scenario to completion (or to its first violation when ``fail_fast``)."""
+    """Execute one scenario to completion (or to its first violation when ``fail_fast``).
+
+    ``hermetic`` installs the :class:`~deterministic_agent_simulator.sim.hermetic.HermeticGuard` in
+    strict mode, so host-clock and entropy reads are violations too. ``allowed_roots`` replaces the
+    one directory a run may touch, which defaults to
+    :func:`~deterministic_agent_simulator.sim.hermetic.simulation_scratch_root`.
+    """
     config = scenario.config
     root = SimRandom.from_seed(scenario.seed)
     trace = Trace(keep=keep_trace)

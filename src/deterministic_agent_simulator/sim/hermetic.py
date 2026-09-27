@@ -185,9 +185,13 @@ class HermeticGuard:
             return repr(file)
 
     def _candidates(self, args: tuple[Any, ...], kwargs: dict[str, Any], paths: int) -> list[Any]:
-        """The path arguments of a call: positional first, then the usual keyword names."""
+        """The path arguments of a call: positional first, then the usual keyword names.
+
+        A path passed under some other keyword is not missed, only misreported: nothing to check
+        means the process directory is checked instead, which is outside the roots.
+        """
         found = list(args[:paths])
-        for key in ("path", "file", "src", "dst", "top"):
+        for key in ("path", "file", "src", "dst", "name", "top"):
             if len(found) < paths and key in kwargs:
                 found.append(kwargs[key])
         return found or [Path.cwd()]  # os.listdir() and friends default to the process directory

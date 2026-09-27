@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
+from itertools import product
 from typing import cast
 
 import pytest
@@ -131,6 +132,54 @@ def test_an_execution_must_commit_inside_its_observation_window() -> None:
     ]
     with pytest.raises(ValueError, match="commit order"):
         observed_execution(TTL, unordered)
+
+
+def test_every_execution_of_a_late_lost_decision_is_accepted() -> None:
+    """An exhaustive grid of the family the earlier model rejected (ADR 0004).
+
+    A decision that lost its response, an operation that sees the approval decided, and a later
+    read and consume, over every combination of commit times and observation windows below. The
+    model that capped the expiry at each operation's earliest point rejected 68 of these 1,080 real
+    executions (checkable against `check/ledger_model.py` at commit 5597102).
+    """
+    grid = product(
+        [5, 10, 30, 60],  # when the lost decision commits
+        ["decide", "consume", "status"],  # what observes the approval next
+        [6, 12, 40, 70],  # when that operation commits
+        [(0, 0), (6, 30), (12, 60)],  # and how wide its window is
+        [TTL - 5, TTL, TTL + 5, TTL + 40],  # when the late read and consume commit
+        [(0, 0), (8, 8), (30, 30)],
+    )
+    checked = 0
+    for decided, kind, second, (before, after), late, (early, slow) in grid:
+        if second < decided or late < second:
+            continue
+        args: tuple[Hashable, ...] = ("apr-1", True, "human2")
+        client = "human2"
+        if kind == "consume":
+            args, client = ("apr-1", "other", "c2"), "c2"
+        elif kind == "status":
+            args, client = ("apr-1",), "auditor"
+        history = observed_execution(
+            TTL,
+            [
+                Call("request", ("tok", "h", "agent"), "agent", 0, 0, 1),
+                Call("decide", ("apr-1", True, "human"), "human", 2, decided, None),
+                Call(kind, args, client, max(0, second - before), second, second + after),
+                Call("status", ("apr-1",), "auditor", max(0, late - early), late, late + slow),
+                Call(
+                    "consume",
+                    ("apr-1", "h", "c1"),
+                    "c1",
+                    max(0, late - early),
+                    late,
+                    late + slow + 1,
+                ),
+            ],
+        )
+        assert _model_accepts(history), [op.describe() for op in history]
+        checked += 1
+    assert checked == 1080
 
 
 def test_the_reference_checker_rejects_impossible_executions() -> None:
