@@ -33,7 +33,9 @@ env:
   UV_FROZEN: "1"
   PYTHONHASHSEED: "0"
   HYPOTHESIS_PROFILE: ci
-  PYTHON_VERSION: "3.12"
+  # Pinned to the patch version in .python-version: trace hashes fold in asyncio ready-queue
+  # sizes, so a golden hash is only comparable to one computed on the same CPython patch release.
+  PYTHON_VERSION: "3.12.14"
 
 jobs:
   lint:
@@ -162,7 +164,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --frozen
-      # The golden file was computed on Windows; a mismatch on either OS fails the job.
+      # The golden file was computed on Windows with the CPython patch version pinned above;
+      # a mismatch on either OS fails the job.
       - run: >-
           uv run das hashes --count 200
           --compare tests/fixtures/golden_trace_hashes.json

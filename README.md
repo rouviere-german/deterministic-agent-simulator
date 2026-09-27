@@ -142,8 +142,10 @@ On a drive without room for a virtual environment, point uv elsewhere first
 ## Results
 
 All numbers below were produced by the commands shown, on one machine: Windows 10 (build
-19045), Intel Core i5-8500 (6 cores, 3.0 GHz), Python 3.12.14, single process, CPU only. The raw
-output is copied without edits except for trimming.
+19045), Intel Core i5-8500 (6 cores, 3.0 GHz), CPython 3.12.14 (pinned in `.python-version`, and
+in CI, because trace hashes fold in asyncio ready-queue sizes and are only comparable within one
+patch release), single process, CPU only. The raw output is copied without edits except for
+trimming.
 
 ### Evaluation against the spec
 
@@ -265,8 +267,11 @@ need a crash or a contended worker pool that another ticket provides.
 
 CI runs `bench/bench_baseline.py --check` and `bench/bench_sim.py --profile ci --check` on every
 push; `bench/thresholds.json` and `bench/sim_thresholds.json` hold the regression thresholds (for
-example: 8/8 bugs found, 0 soundness violations, 0 checker disagreements, 0 hash mismatches,
-median shrink ratio at least 4x, at least 5 seeds/s).
+example: 8/8 bugs found, 0 soundness violations, 0 checker disagreements against brute force and
+against the independent reference checker, 0 hash mismatches, median shrink ratio at least 7x, at
+least 5 seeds/s). The threshold is the measured floor, not the spec target of 10x (see Non-goals).
+The CI profile shrinks 8 failures instead of 24, so its median is a small sample of the full-profile
+number above, not a better one.
 
 ## Security
 
