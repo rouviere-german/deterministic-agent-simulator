@@ -186,6 +186,28 @@ def test_audit_chain_is_checked_per_append_and_at_the_end() -> None:
     assert h.invariants == ["audit_chain_valid"]
 
 
+def test_a_truncated_or_forked_audit_chain_is_detected() -> None:
+    """A chain can verify on its own and still not be the chain the run appended to."""
+    h = Harness()
+    chain = AuditChain()
+    for index in range(3):
+        chain.append(index, "agent", "a", {})
+        h.suite.on_audit(chain)
+    chain.entries.pop()  # a lost last append, or a fork after a restart
+    chain.head = str(chain.entries[-1]["hash"])
+    assert chain.verify().ok
+    h.suite.final(
+        finished=True,
+        reason=None,
+        history=History(),
+        chain=chain,
+        hermetic_violations=[],
+        agent_errors=[],
+    )
+    assert h.invariants == ["audit_chain_valid"]
+    assert "3 appends" in h.suite.violations[0].detail
+
+
 def test_final_checks_termination_hermeticity_errors_and_linearizability() -> None:
     h = Harness()
     history = History()

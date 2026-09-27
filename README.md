@@ -279,7 +279,7 @@ invariants on every run:
 | No approval bypass or reuse | crashes between approval and consume, failed consumes, a model that changes arguments on retry | `approval_fresh`, `consume_once`, `ledger_linearizable` |
 | No budget overrun | refunds that together exceed the budget, refunds timing out after commit, torn journal writes | `budget_respected` |
 | No double effect | timeouts after commit, duplicate deliveries, crashes and redelivery | `no_duplicate_effects` |
-| Tamper-evident trail | every audit append re-verified | `audit_chain_valid` |
+| Tamper-evident trail | every audit append re-verified; the chain left at the end must match the appends the run made, so a lost or forked entry is caught | `audit_chain_valid` |
 | Hermetic runs | any socket or name lookup, file or directory outside the run's scratch root, sleep, subprocess, thread start, host-clock read or host entropy draw | `hermetic` |
 
 Controls around the tool itself:
@@ -326,6 +326,12 @@ The threat model with a threat -> control -> test table is in
   deleting a ticket while shrinking can reorder same-instant callbacks later in the run (ADR 0003).
   In this world that rarely matters (1 of 300 seeds changed its semantic trace between seeded and
   FIFO order); interleavings vary mostly through keyed, randomized latencies.
+- **The audit chain is not attacked by the simulation.** The chain is appended by the world's audit
+  adapter, and no fault kind or bug flag corrupts, reorders or truncates it; the oracle checks every
+  append and, since this round of fixes, that the final chain is the one the run appended to
+  (truncation and forks are detected). It still fires only in tests, not in campaigns. Moving the
+  chain into the agent's crashable store and planting a non-atomic append would make it a real
+  target; that is a change to the system under test, and it was not made here.
 - **Live LLM evaluation.** The simulator measures harness safety under a seeded policy, not model
   quality. The Anthropic adapter is verified against a mocked client only; nothing here calls the
   API.

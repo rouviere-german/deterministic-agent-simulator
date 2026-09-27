@@ -18,7 +18,8 @@ invariant                   meaning
 ``ledger_linearizable``     the client-observed ledger history is linearizable
 ``termination``             every plan stays within its decision bound and the run finishes
                             (no deadlock, livelock or missed deadline)
-``audit_chain_valid``       the agent's hash-chained audit trail verifies
+``audit_chain_valid``       the agent's hash-chained audit trail verifies, and the chain left at
+                            the end is the one the run appended to (no truncation or fork)
 ``hermetic``                no real I/O was attempted during the run
 ``agent_error``             the agent raised no unexpected exception
 ==========================  ===============================================================
@@ -95,6 +96,8 @@ class OracleSuite:
         self._cited: dict[str, int] = {}
         self._consumers: dict[str, set[str]] = {}
         self._consume_facts: dict[str, list[ConsumeFact]] = {}
+        self._audit_appends = 0
+        self._audit_head = GENESIS_HASH
         self.llm_calls = 0
         self.checks = 0
 
@@ -225,6 +228,11 @@ class OracleSuite:
         reason = AuditChain.check_entry(chain.entries[index], index, prev)
         if reason is not None:
             self.violate("audit_chain_valid", f"audit entry {index}: {reason}")
+            return
+        # Anchor what the run appended, so that losing or forking entries later is detectable:
+        # a truncated chain still verifies against itself.
+        self._audit_appends = len(chain.entries)
+        self._audit_head = str(chain.entries[index]["hash"])
 
     # ---------------------------------------------------------- termination
     def final(
@@ -246,8 +254,16 @@ class OracleSuite:
         if not finished:
             self.violate("termination", reason or "the run did not finish")
         checked = chain.verify()
+        self.checks += 1
         if not checked.ok:
             self.violate("audit_chain_valid", f"audit entry {checked.bad_index}: {checked.reason}")
+        elif len(chain.entries) != self._audit_appends or chain.head != self._audit_head:
+            self.violate(
+                "audit_chain_valid",
+                f"the chain ends at {len(chain.entries)} entries (head {chain.head[:12]}) after "
+                f"{self._audit_appends} appends (head {self._audit_head[:12]}): "
+                f"entries were lost, reordered or forked",
+            )
         history.close_pending()
         model = ApprovalModel(self._ledger.ttl_us)
         results = check_partitioned(history.ops, approval_object_key(history.tokens), model)
