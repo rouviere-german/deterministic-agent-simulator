@@ -6,6 +6,7 @@
   "determinism_mismatched_seeds": {"max": 0},
   "golden_mismatches": {"max": 0},
   "checker_disagreements": {"max": 0},
+  "checker_reference_disagreements": {"max": 0},
   "checker_fixture_failures": {"max": 0},
   "seeds_per_second": {"min": 5}
 }

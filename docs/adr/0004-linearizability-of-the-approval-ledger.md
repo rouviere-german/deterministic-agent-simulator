@@ -36,24 +36,40 @@ is only known to lie within its invocation-response interval.
   checked object.
 - Each part is checked with the Wing and Gong search in Lowe's formulation (linked list of call and
   return events, lifting, a memo of `(linearized set, state)`), with a step budget.
-- The sequential model of one approval (`check/ledger_model.py`) carries the latest linearization
-  point and an interval `[expires_lo, expires_hi]` of expiry times consistent with the
-  observations. Each operation takes the earliest point its outcome allows and narrows the
-  interval; the model is nondeterministic where an outcome has several explanations, and the
+- The sequential model of one approval (`check/ledger_model.py`) carries an interval
+  `[expires_lo, expires_hi]` of expiry times consistent with the observations and a *base* time;
+  the linearization point of the latest operation is `max(base, expires + offset)`, where the
+  offset is `-ttl` once an approval was granted (every later point is at or after the granting
+  decision, whose point is `expires - ttl`) and `0` once an operation observed the approval
+  expired. Each operation moves the base to the earliest time its predecessors allow and narrows
+  the interval; the model is nondeterministic where an outcome has several explanations, and the
   search tries every successor.
 - A brute-force checker (every admissible subset of pending operations, every permutation) is kept
-  as an independent oracle for differential tests on histories of at most 8 operations.
+  as an independent oracle for the *search* on histories of at most 8 operations. Because it uses
+  the same sequential model, the *model* is checked separately against `check/ledger_reference.py`:
+  an exhaustive checker that runs the real `ApprovalLedger` on a clock of symbolic times, explores
+  both sides of its `now >= expires` branch and decides each candidate order by solving the
+  resulting integer difference constraints (Bellman-Ford over a simple temporal network).
 
 ## Consequences
 
 - The `non_durable_consume_flag` bug is found from any client's observation of the rolled-back
   state (the agent's, the reviewer's or the auditor's), not only when it happens to cause a
   duplicate effect.
-- The checker agrees with brute force on every differential test we run (hypothesis-generated
-  histories in the unit tests, and the seeded samples in `bench/bench_sim.py`), and histories
-  recorded from the real ledger are always accepted.
-- "Earliest admissible point" is a proof obligation of the model rather than a general property;
-  it holds here because later operations only need their own points to be no earlier, and it is
-  what the differential tests exercise.
+- The checker agrees with brute force and with the reference checker on every differential test we
+  run (hypothesis-generated histories in the unit tests, and the seeded samples in
+  `bench/bench_sim.py`), and histories recorded from the real ledger are always accepted.
+- Keeping the point as a function of the expiry, instead of choosing a number for it, is what makes
+  the earliest base admissible: with the expiry fixed, every constraint on a point is a plain lower
+  or upper bound, so the earliest feasible point can never rule out a later operation. An earlier
+  version of the model also *tightened* the expiry at each operation's earliest point, arguing that
+  later operations only need their own points to be no earlier. That was wrong: a decision whose
+  response was lost may have committed much later, and its expiry is bounded above only by when
+  later operations returned. The model rejected real executions in which a lost decision committed
+  after the next operation's earliest point (with a second approver, or a retried consume); the two
+  smallest such executions are fixtures in
+  `tests/unit/test_ledger_reference.py`. Nothing in the current world produces them - one reviewer
+  that retries only after the commit - which is why 50,000 clean seeds never showed it, and why the
+  reference checker rather than a campaign is what found it.
 - The model is specific to one object type. Another service needs its own sequential model; the
   search and the partitioning are reusable.

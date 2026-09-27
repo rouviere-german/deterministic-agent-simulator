@@ -21,7 +21,9 @@ Metrics (the evaluation section of the project spec):
    recomputes them on Linux and Windows) must match.
 5. checker: Wing-Gong vs the brute-force permutation checker on random histories of at most 8
    operations (a register model, and the approval-ledger model on real ledger executions with
-   perturbed outputs), plus known linearizable and non-linearizable fixtures.
+   perturbed outputs), plus known linearizable and non-linearizable fixtures. Brute force uses the
+   same sequential model, so it validates the search; the approval *model* is validated against
+   ``check/ledger_reference.py``, an independent checker that executes the real ledger.
 6. throughput: seeds per second (and per minute) of the soundness campaign.
 7. scheduler: how often the seeded tie-breaker has a choice (callbacks ready at the same virtual
    instant) and how often the seeded order changes what happens compared with FIFO order.
@@ -46,6 +48,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 from deterministic_agent_simulator.agent.bugs import BUG_CATALOG, BugFlag
 from deterministic_agent_simulator.check.ledger_model import ApprovalModel
+from deterministic_agent_simulator.check.ledger_reference import (
+    MAX_REFERENCE_OPS,
+    reference_linearizable,
+)
 from deterministic_agent_simulator.check.linearizability import (
     Operation,
     brute_force_check,
@@ -365,6 +371,25 @@ def _fixtures(ttl: int) -> list[tuple[str, list[Operation], bool]]:
     ]
 
 
+def _reference_agreement(profile: Profile, rng: SimRandom, ttl: int) -> dict[str, Any]:
+    """Wing-Gong with the approval model vs an independent checker of the real ledger (ADR 0004)."""
+    model = ApprovalModel(ttl)
+    agree = linearizable = 0
+    started = time.perf_counter()
+    for _ in range(profile.checker_histories):
+        history = _ledger_history(rng, ttl)[:MAX_REFERENCE_OPS]
+        expected = reference_linearizable(history, ttl)
+        agree += int(wing_gong_check(history, model).ok == expected)
+        linearizable += int(expected)
+    return {
+        "histories": profile.checker_histories,
+        "agreements": agree,
+        "linearizable": linearizable,
+        "not_linearizable": profile.checker_histories - linearizable,
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
 def checker(profile: Profile) -> dict[str, Any]:
     rng = SimRandom.from_seed(20260922)
     ttl = 100
@@ -391,12 +416,15 @@ def checker(profile: Profile) -> dict[str, Any]:
             "not_linearizable": profile.checker_histories - linearizable,
             "seconds": round(time.perf_counter() - started, 1),
         }
+    reference = _reference_agreement(profile, rng, ttl)
     fixtures = _fixtures(ttl)
     model = ApprovalModel(ttl)
     fixtures_ok = sum(1 for _, ops, want in fixtures if wing_gong_check(ops, model).ok == want)
     return {
         "models": rows,
         "disagreements": disagreements,
+        "reference": reference,
+        "reference_disagreements": reference["histories"] - reference["agreements"],
         "fixtures": len(fixtures),
         "fixtures_ok": fixtures_ok,
     }
@@ -454,6 +482,7 @@ def summary_metrics(results: dict[str, Any]) -> dict[str, float]:
         metrics["golden_mismatches"] = results["determinism"]["golden_mismatches"]
     if "checker" in results:
         metrics["checker_disagreements"] = results["checker"]["disagreements"]
+        metrics["checker_reference_disagreements"] = results["checker"]["reference_disagreements"]
         metrics["checker_fixture_failures"] = (
             results["checker"]["fixtures"] - results["checker"]["fixtures_ok"]
         )
@@ -532,7 +561,13 @@ def _print_tables(results: dict[str, Any]) -> None:
                 f"| {name} | {row['histories']} | {row['agreements']} | {row['linearizable']} | "
                 f"{row['not_linearizable']} |"
             )
-        print(f"\nknown fixtures classified correctly: {chk['fixtures_ok']}/{chk['fixtures']}")
+        ref = chk["reference"]
+        print(
+            f"\nApproval model vs the independent reference checker (real ledger, at most "
+            f"{MAX_REFERENCE_OPS} operations): {ref['agreements']}/{ref['histories']} agree "
+            f"({ref['not_linearizable']} of them not linearizable)"
+        )
+        print(f"known fixtures classified correctly: {chk['fixtures_ok']}/{chk['fixtures']}")
     if "scheduler" in results:
         sch = results["scheduler"]
         print(
