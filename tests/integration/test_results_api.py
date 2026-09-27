@@ -64,6 +64,8 @@ def results_dir(tmp_path: Path, replay_key_env: str) -> Path:
     forged["seed"] += 1
     (repros / "forged.json").write_text(json.dumps(forged), encoding="utf-8")
     (repros / "garbage.json").write_text("[]", encoding="utf-8")
+    (repros / "bignum.json").write_bytes(b'{"seed": ' + b"9" * 5_000 + b"}")
+    (repros / "deep.json").write_bytes(b"[" * 100_000)
     return tmp_path
 
 
@@ -108,13 +110,15 @@ def test_unknown_or_unsafe_campaign_names_are_not_found(client: TestClient, name
 
 
 def test_repro_listing_reports_signature_validity(client: TestClient) -> None:
-    repros = client.get("/v1/repros", headers=auth(READER)).json()["repros"]
+    response = client.get("/v1/repros", headers=auth(READER))
+    assert response.status_code == 200  # crafted files in the directory are skipped, not fatal
+    repros = response.json()["repros"]
     by_name = {item["name"]: item for item in repros}
     assert by_name[REPRO.stem]["signature_valid"] is True
     expected = json.loads(REPRO.read_text(encoding="utf-8"))["expected"]["invariant"]
     assert by_name[REPRO.stem]["invariant"] == expected
     assert by_name["forged"]["signature_valid"] is False
-    assert "garbage" not in by_name
+    assert {"garbage", "bignum", "deep"}.isdisjoint(by_name)
 
 
 def test_verify_accepts_signed_documents_and_rejects_forgeries(client: TestClient) -> None:

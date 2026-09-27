@@ -64,6 +64,8 @@ def regression_test_source(document: dict[str, Any], repro_name: str) -> str:
     if not _SAFE_NAME.fullmatch(repro_name):
         raise ValueError("replay file names may use letters, digits, '_', '.', '-' only")
     seed = int(document["seed"])
+    if seed < 0:
+        raise ValueError("seeds must not be negative: the test name would not be an identifier")
     bugs = document["config"].get("bugs", [])
     flags = "".join(f"\n- {flag}" for flag in bugs) if bugs else " none"
     if not all(re.fullmatch(r"[a-z_]{1,40}", str(flag)) for flag in bugs):

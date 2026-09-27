@@ -65,7 +65,7 @@ def _config(bugs: str, mode: str) -> Any:
 
 @app.command()
 def run(
-    seed: int,
+    seed: Annotated[int, typer.Argument(min=0, help="Seed to run.")],
     bugs: BugsOption = "",
     mode: ModeOption = "swarm",
     trace: Annotated[bool, typer.Option(help="Print the (redacted) trace.")] = False,
@@ -85,8 +85,8 @@ def run(
 
 @app.command()
 def campaign(
-    seeds: Annotated[int, typer.Option(help="Number of seeds to run.")] = 1_000,
-    start: Annotated[int, typer.Option(help="First seed.")] = 0,
+    seeds: Annotated[int, typer.Option(min=1, help="Number of seeds to run.")] = 1_000,
+    start: Annotated[int, typer.Option(min=0, help="First seed.")] = 0,
     bugs: BugsOption = "",
     mode: ModeOption = "swarm",
     max_seconds: Annotated[float, typer.Option(help="Wall-clock cap in seconds.")] = 600.0,
@@ -187,7 +187,7 @@ def _write_repros(
 
 @app.command()
 def shrink(
-    seed: int,
+    seed: Annotated[int, typer.Argument(min=0, help="Failing seed to shrink.")],
     bugs: BugsOption = "",
     mode: ModeOption = "swarm",
     out_dir: Annotated[Path, typer.Option(help="Where to write the repro and test.")] = Path(
@@ -236,8 +236,8 @@ def replay(
 
 @app.command()
 def hashes(
-    start: Annotated[int, typer.Option(help="First seed.")] = 0,
-    count: Annotated[int, typer.Option(help="Number of seeds.")] = 200,
+    start: Annotated[int, typer.Option(min=0, help="First seed.")] = 0,
+    count: Annotated[int, typer.Option(min=1, help="Number of seeds.")] = 200,
     bugs: BugsOption = "",
     mode: ModeOption = "swarm",
     out: Annotated[Path | None, typer.Option(help="Write {seed: hash} JSON here.")] = None,

@@ -66,6 +66,12 @@ def test_bad_options_are_rejected(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["run", "1", "--mode", "chaos"]) == 2
     assert cli.main(["run", "1", "--bugs", "segfault"]) == 2
     assert cli.main(["replay", "x.json", "--build", "tomorrow"]) == 2
+    # A negative seed would emit a regression test whose name is not an identifier.
+    assert cli.main(["run", "--", "-3"]) == 2
+    assert cli.main(["shrink", "--", "-3"]) == 2
+    assert cli.main(["campaign", "--start", "-1", "--seeds", "1"]) == 2
+    assert cli.main(["campaign", "--seeds", "0"]) == 2
+    assert cli.main(["hashes", "--start", "-1"]) == 2
     capsys.readouterr()
 
 

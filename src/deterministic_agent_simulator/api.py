@@ -101,9 +101,15 @@ class VerifyRequest(BaseModel):
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
+    """A results file as a JSON object, or None when it is unreadable or malformed.
+
+    ValueError covers decoding errors, invalid JSON and integers with more digits than int()
+    accepts; RecursionError covers nesting deeper than the parser's stack. A crafted file in the
+    results directory is a bad row in a listing, never a failed request.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 

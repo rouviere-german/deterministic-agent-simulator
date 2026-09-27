@@ -40,6 +40,7 @@ from deterministic_agent_simulator.sim.faults import FaultKey
 
 __all__ = [
     "MAX_REPRO_BYTES",
+    "MAX_REPRO_DEPTH",
     "REPRO_FORMAT",
     "Keyring",
     "ReplayOutcome",
@@ -55,6 +56,9 @@ __all__ = [
 
 REPRO_FORMAT = "das-repro/1"
 MAX_REPRO_BYTES = 2_000_000
+MAX_REPRO_DEPTH = 24
+"""Nesting limit, checked before the document is hashed or validated: a deeply nested file would
+otherwise exhaust the stack inside canonical JSON or the schema instead of being rejected."""
 
 
 class ReproError(ValueError):
@@ -130,7 +134,7 @@ class _Document(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     format: Literal["das-repro/1"]
     created_by: str
-    seed: int
+    seed: int = Field(ge=0)
     config: dict[str, JsonValue]
     tickets: list[int]
     faults: list[tuple[str, str, str, int]]
@@ -208,15 +212,33 @@ def load_repro(path: Path, keyring: Keyring) -> tuple[Scenario, dict[str, Any]]:
     return parse_repro(raw, keyring)
 
 
+def _depth(value: object) -> int:
+    """Maximum nesting depth of a decoded JSON value, computed without recursion."""
+    deepest = 0
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        current, level = stack.pop()
+        deepest = max(deepest, level)
+        if isinstance(current, dict):
+            stack.extend((item, level + 1) for item in current.values())
+        elif isinstance(current, list):
+            stack.extend((item, level + 1) for item in current)
+    return deepest
+
+
 def parse_repro(raw: bytes, keyring: Keyring) -> tuple[Scenario, dict[str, Any]]:
     if len(raw) > MAX_REPRO_BYTES:
         raise ReproError("replay file is too large")
     try:
+        # A decoding error, a number with more digits than int() accepts (ValueError) and nesting
+        # deeper than the parser's stack (RecursionError) are all just malformed input.
         document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (ValueError, RecursionError) as exc:
         raise ReproError("replay file is not valid UTF-8 JSON") from exc
     if not isinstance(document, dict):
         raise ReproError("replay file is not a JSON object")
+    if _depth(document) > MAX_REPRO_DEPTH:
+        raise ReproError("replay file is nested too deeply")
     keyring.verify(document)  # authenticate before trusting any field
     try:
         parsed = _Document.model_validate(document)

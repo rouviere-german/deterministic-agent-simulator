@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from deterministic_agent_simulator.agent.bugs import BugFlag
 from deterministic_agent_simulator.agent.ports import Proposal
+from deterministic_agent_simulator.check.oracles import INVARIANTS
 from deterministic_agent_simulator.core.config import Settings
 from deterministic_agent_simulator.core.tracing import build_tracer_provider
 from deterministic_agent_simulator.emit import emit_regression_test, regression_test_source
@@ -221,6 +222,17 @@ def test_unsigned_foreign_oversized_and_malformed_files_are_rejected(
         parse_repro(json.dumps(signed_garbage).encode(), KEYRING)
 
 
+def test_hostile_json_is_rejected_instead_of_escaping_as_another_error() -> None:
+    """Inputs that make json.loads raise something other than JSONDecodeError."""
+    with pytest.raises(ReproError, match="JSON"):
+        parse_repro(b'{"seed": ' + b"9" * 5_000 + b"}", KEYRING)  # int_max_str_digits
+    with pytest.raises(ReproError, match="JSON"):
+        parse_repro(b"[" * 100_000, KEYRING)  # RecursionError in the parser
+    deep = b'{"a":' * 200 + b"1" + b"}" * 200
+    with pytest.raises(ReproError, match="nested too deeply"):
+        parse_repro(deep, KEYRING)
+
+
 def test_keyring_requirements() -> None:
     with pytest.raises(ReproError, match="32 bytes"):
         Keyring({"k": b"short"}, "k")
@@ -265,6 +277,40 @@ def test_emitted_regression_tests_are_valid_python(
     assert len(names) == 2
     assert all(name.startswith("test_seed_") for name in names)
     assert "repro_seed_1.json" in source
+
+
+@settings(max_examples=60)
+@given(seed=st.integers(0, 2**63 - 1), invariant=st.sampled_from(INVARIANTS))
+def test_every_seed_and_invariant_emits_compilable_python(seed: int, invariant: str) -> None:
+    document = {
+        "seed": seed,
+        "config": {"bugs": ["non_idempotent_retry"]},
+        "expected": {"invariant": invariant, "trace_length": 4, "original_trace_length": 40},
+    }
+    source = regression_test_source(document, "repro.json")
+    compile(source, "<emitted>", "exec")
+    assert f"def test_seed_{seed}_{invariant}_reproduces_with_recorded_flags(" in source
+
+
+def test_negative_seeds_are_refused_by_emission_and_by_the_replay_schema(
+    shrunk: tuple[RunResult, ShrinkResult],
+) -> None:
+    """`seed_-3_...` is not an identifier, so a negative seed may not reach a generated test."""
+    document = {
+        "seed": -3,
+        "config": {"bugs": []},
+        "expected": {
+            "invariant": "no_duplicate_effects",
+            "trace_length": 1,
+            "original_trace_length": 2,
+        },
+    }
+    with pytest.raises(ValueError, match="negative"):
+        regression_test_source(document, "repro.json")
+    body = {k: v for k, v in _document(shrunk).items() if k != "signature"}
+    signed = KEYRING.sign({**body, "seed": -3})
+    with pytest.raises(ReproError, match="schema"):
+        parse_repro(json.dumps(signed).encode(), KEYRING)
 
 
 @pytest.mark.parametrize(
