@@ -43,10 +43,16 @@ What makes this hold:
 - **`trace.py` - `Trace`** records events and hashes them incrementally. Campaigns keep only the
   hash; shrinking and reports keep the events.
 - **`faults.py`** defines the fault kinds, the profiles and the `FaultPlan` (below).
-- **`hermetic.py` - `HermeticGuard`** patches `socket`, `open`/`io.open`/`os.open` (outside the
-  allowed roots), `time.sleep`, `subprocess.Popen` and `os.system` while a run executes. Every
-  attempt is recorded before the exception is raised, so an agent that swallows the exception is
-  still reported by the `hermetic` oracle.
+- **`hermetic.py` - `HermeticGuard`** patches, for the duration of a run: every socket call and
+  name lookup; file opens *and* the path-taking `os` and `shutil` calls (`stat`, `listdir`,
+  `scandir`, `mkdir`, `remove`, `rename`, `rmtree`...) for paths outside the allowed roots, which
+  are one scratch directory (`<system temp>/das-sim`), not the whole temp directory; `time.sleep`,
+  `subprocess.Popen`, `os.system`, `os.popen` and `threading.Thread.start`; and, in strict mode
+  (the default), host-clock reads (`time.time`, `time.monotonic`, `datetime.now`...) and
+  process-wide entropy (`random` module functions, `os.urandom`, `uuid4`, `secrets`), which are the
+  quiet sources of irreproducibility. A seeded `random.Random` instance still works. Every attempt
+  is recorded before the exception is raised, so an agent that swallows the exception is still
+  reported by the `hermetic` oracle.
 
 ## The simulated world (`world/`)
 

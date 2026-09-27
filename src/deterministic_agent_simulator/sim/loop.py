@@ -50,7 +50,7 @@ _US_PER_S = 1_000_000
 
 
 class HermeticityViolation(RuntimeError):  # noqa: N818 - reads as a verdict, like SystemExit
-    """Code under simulation attempted real I/O (network, files outside tmp, threads...)."""
+    """Code under simulation reached the host (network, files, threads, clock, entropy...)."""
 
 
 class SimDeadlockError(RuntimeError):

@@ -10,7 +10,6 @@ reproduces it exactly (the same trace hash); shrinking starts from there.
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
@@ -26,7 +25,7 @@ from deterministic_agent_simulator.agent.ports import Proposal
 from deterministic_agent_simulator.agent.runtime import AgentConfig
 from deterministic_agent_simulator.check.oracles import Violation
 from deterministic_agent_simulator.sim.faults import FaultKey, FaultPlan, FaultProfile
-from deterministic_agent_simulator.sim.hermetic import HermeticGuard
+from deterministic_agent_simulator.sim.hermetic import HermeticGuard, simulation_scratch_root
 from deterministic_agent_simulator.sim.loop import (
     SimDeadlockError,
     SimEventLoop,
@@ -240,7 +239,7 @@ def run_scenario(
         config=WorldConfig(),
         fail_fast=fail_fast,
     )
-    roots = list(allowed_roots) if allowed_roots is not None else [Path(tempfile.gettempdir())]
+    roots = list(allowed_roots) if allowed_roots is not None else [simulation_scratch_root()]
     guard = HermeticGuard(roots)
     context: AbstractContextManager[Any] = guard if hermetic else nullcontext()
     reason: str | None = None

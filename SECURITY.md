@@ -30,7 +30,8 @@ Especially interesting reports:
 - a replay file that loads without the key, or whose content changes what the generated test
   does;
 - canary tokens, customer data or secrets reaching a report, trace, span or API response;
-- code under simulation reaching the network or files outside tmp without being reported.
+- code under simulation reaching the network, the host clock or files outside the run's scratch
+  root without being reported.
 
 Out of scope: denial of service by traffic volume, findings that need a compromised host, bypasses
 of the hermetic guard from C extensions or `ctypes` (it is a correctness aid, not a sandbox; see

@@ -73,9 +73,10 @@ flowchart TB
   virtual time in integer microseconds, exactly one ready callback per iteration picked by a
   seeded stream, every scheduling choice folded into the trace hash, real I/O methods raising.
   `SimRandom` is SplitMix64 with keyed derivation, so faults, latencies and model decisions are
-  keyed per ticket and stay put while shrinking (ADR 0003). `HermeticGuard` blocks sockets, file
-  opens outside tmp, `time.sleep` and subprocesses for the duration of a run and records every
-  attempt.
+  keyed per ticket and stay put while shrinking (ADR 0003). `HermeticGuard` blocks, for the duration
+  of a run, sockets and name lookups, file opens and path-taking `os`/`shutil` calls outside the
+  run's scratch root, `time.sleep`, subprocesses, thread starts and - in strict mode, the default -
+  host-clock and entropy reads, and records every attempt.
 - **World** (`world/`). An RPC layer whose commit point sits between the request and response
   legs, so a timeout after commit is a real ambiguity; an e-mail outbox and a payments stub that
   deduplicate by idempotency key; an approval ledger with request / decide / consume-once
@@ -279,7 +280,7 @@ invariants on every run:
 | No budget overrun | refunds that together exceed the budget, refunds timing out after commit, torn journal writes | `budget_respected` |
 | No double effect | timeouts after commit, duplicate deliveries, crashes and redelivery | `no_duplicate_effects` |
 | Tamper-evident trail | every audit append re-verified | `audit_chain_valid` |
-| Hermetic runs | any socket, file outside tmp, sleep or subprocess | `hermetic` |
+| Hermetic runs | any socket or name lookup, file or directory outside the run's scratch root, sleep, subprocess, thread start, host-clock read or host entropy draw | `hermetic` |
 
 Controls around the tool itself:
 
@@ -317,7 +318,10 @@ The threat model with a threat -> control -> test table is in
 - **Coverage-guided fuzzing.** Exploration is random over seeds with swarm fault profiles; there is
   no feedback from coverage.
 - **Sandboxing.** The hermetic guard patches Python-level APIs to keep runs reproducible; C
-  extensions or `ctypes` can bypass it. It is not an isolation boundary for hostile code.
+  extensions, `ctypes`, a name imported before the run started or a file descriptor opened earlier
+  can bypass it. It is not an isolation boundary for hostile code. Strict mode replaces
+  `datetime.datetime` and `datetime.date` with subclasses while a run executes, so
+  `isinstance(x, datetime.datetime)` is False for instances built before the run.
 - **Shrink-stable scheduling.** The scheduler's tie-breaks draw from one stream per run, so
   deleting a ticket while shrinking can reorder same-instant callbacks later in the run (ADR 0003).
   In this world that rarely matters (1 of 300 seeds changed its semantic trace between seeded and
