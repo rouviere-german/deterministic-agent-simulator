@@ -14,6 +14,7 @@ from deterministic_agent_simulator.agent.bugs import BugFlag
 from deterministic_agent_simulator.agentic.audit import AuditLog
 from deterministic_agent_simulator.core import tracing
 from deterministic_agent_simulator.core.security import hash_api_key
+from deterministic_agent_simulator.demo import run_demo
 from deterministic_agent_simulator.runner import SimConfig, find_failure
 
 pytestmark = pytest.mark.integration
@@ -215,6 +216,27 @@ def test_demo_runs_offline_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixt
     assert payload["shrunk_trace_events"] < payload["original_trace_events"]
     assert (tmp_path / "failure_report.json").is_file()
     assert (tmp_path / "metrics.prom").is_file()
+
+
+def test_demo_can_run_twice_in_the_same_workdir(tmp_path: Path) -> None:
+    """`make demo` has to be repeatable: the second run may not trip over the first one's files."""
+    first = run_demo(tmp_path, clean_seeds=5)
+    second = run_demo(tmp_path, clean_seeds=5)
+    assert first["replay_file"] == second["replay_file"]
+    assert second["regression_test_on_clean_build"] == {"reproduces": "passed", "holds": "passed"}
+    regressions = tmp_path / "regressions"
+    written = sorted(p.name for p in regressions.glob("*.json"))
+    assert written == [str(second["replay_file"])]
+
+
+def test_demo_refuses_a_workdir_whose_regressions_it_does_not_own(tmp_path: Path) -> None:
+    """`das demo --workdir tests` must not delete committed regression tests."""
+    foreign = tmp_path / "regressions" / "repro_seed_4_no_duplicate_effects.json"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="did not write"):
+        run_demo(tmp_path, clean_seeds=1)
+    assert foreign.read_text(encoding="utf-8") == "{}"
 
 
 def test_generate_api_key(capsys: pytest.CaptureFixture[str]) -> None:

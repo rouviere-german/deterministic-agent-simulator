@@ -10,6 +10,10 @@
 
 Everything runs in-process: seeded SimLLM, no network, no API key. If APP_REPLAY_HMAC_KEY is not
 set, the demo signs with a random key that lives only for this process.
+
+The demo writes into ``workdir`` and owns ``workdir/regressions``, which it empties of the files it
+wrote before, so running it twice in a row works. It refuses to run when that folder already holds
+files it did not write (``das demo --workdir tests`` must not delete committed regression tests).
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import importlib.util
 import json
 import os
 import secrets
+import shutil
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -52,6 +58,32 @@ from deterministic_agent_simulator.sim.metrics import create_sim_metrics
 __all__ = ["run_demo"]
 
 DEMO_BUG = BugFlag.NON_IDEMPOTENT_RETRY
+_MARKER = ".das-demo"
+_OWNED = ("repro_seed_*.json", "test_repro_*.py")
+
+
+def _regressions_dir(workdir: Path) -> Path:
+    """The folder the demo owns, emptied of what an earlier demo run wrote into it.
+
+    The marker file is what makes "owned" checkable: a folder without it that already holds
+    something belongs to someone else, and deleting from it would be wrong.
+    """
+    folder = workdir / "regressions"
+    marker = folder / _MARKER
+    if folder.is_dir() and not marker.exists() and any(folder.iterdir()):
+        raise RuntimeError(
+            f"{folder} already holds files the demo did not write; use an empty --workdir "
+            f"(or delete the folder if an older demo run created it)"
+        )
+    folder.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        "Written by `das demo`; every file here is replaced on the next run.\n", encoding="utf-8"
+    )
+    for pattern in _OWNED:
+        for stale in folder.glob(pattern):
+            stale.unlink()
+    shutil.rmtree(folder / "__pycache__", ignore_errors=True)
+    return folder
 
 
 @contextlib.contextmanager
@@ -84,7 +116,12 @@ def _load_module(path: Path) -> Any:
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot import {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    saved = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True  # no __pycache__ in the folder the demo cleans
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = saved
     return module
 
 
@@ -175,6 +212,7 @@ def run_demo(
     workdir: Path, *, clean_seeds: int = 500, max_search: int = 2_000
 ) -> dict[str, JsonValue]:
     workdir.mkdir(parents=True, exist_ok=True)
+    regressions = _regressions_dir(workdir)
     keyring, key, key_id = _keyring()
 
     # 1. find the planted bug
@@ -196,9 +234,7 @@ def run_demo(
         original_trace_length=shrunk.original_length,
         keyring=keyring,
     )
-    repro_path = workdir / "regressions" / f"repro_seed_{seed}_{first.invariant}.json"
-    for stale in repro_path.parent.glob("*"):
-        stale.unlink()
+    repro_path = regressions / f"repro_seed_{seed}_{first.invariant}.json"
     write_repro(repro_path, document)
 
     # 3. tampering is detected; 4. the regression test fails on the buggy build only
