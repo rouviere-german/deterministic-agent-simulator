@@ -6,8 +6,8 @@ reach, then shrinks each one to a small file that reproduces it on demand.**
 An AI agent that acts on a customer's behalf does real things: it sends the e-mail, it issues the
 refund, it spends the budget. Most of the time it works. The failures that matter are the ones that
 need bad luck to appear — a network timeout that arrives *after* the refund already went through, a
-crash in the one-second window between a manager approving a payout and the agent recording that it
-used the approval, a hostile sentence hidden in a customer's ticket that the model decides to obey.
+crash in the moment between a manager approving a payout and the agent recording that it used the
+approval, a hostile sentence hidden in a customer's ticket that the model decides to obey.
 
 When those land in production, the damage is concrete: a customer refunded twice, a payout sent to
 an address an attacker wrote into a support ticket, a monthly budget blown past because the agent
@@ -33,8 +33,8 @@ API key: a seeded stand-in plays the role of the language model.
   "did any customer get charged twice?", "was a human approval used more than once?", "did spending
   stay under budget?". A rule that breaks stops the run and names what broke.
 - **Reproduces any failure exactly.** Because the whole run comes from one seed, a failure is not a
-  ghost. Replay the seed and you get the identical sequence of events, on Windows or Linux, today or
-  next year.
+  ghost. Replay the seed and you get the identical sequence of events — twenty seeds run a hundred
+  times each produced one fingerprint apiece, with no exceptions.
 - **Shrinks a failure to its smallest form.** A failing run is typically around 200 events long and
   unreadable. The harness automatically deletes everything that is not needed to break the rule.
   Almost half the time it lands at **14 to 19 events: one ticket, one injected fault, two
